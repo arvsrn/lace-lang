@@ -115,7 +115,7 @@ impl Scanner {
         let mut string: String = String::new();
         let mut escaping: bool = false;
 
-        while let Some(c) = self.get_current() {
+        while let Some(c) = self.advance() {
             match c {
                 '\\' => escaping = true,
                 '"' => {
@@ -127,17 +127,14 @@ impl Scanner {
                 }
                 _ => string.push(c),
             }
-
-            self.advance();
         }
 
-        self.current -= 1;
         return Token::StringLiteral(string);
     }
 
     pub fn scan(&mut self) {
         while let Some(c) = self.get_current() {
-            if c.is_whitespace() {
+            if c.is_whitespace() {  
                 if c == '\n' {
                     self.tokens.push(Token::OpNewline);
                 }

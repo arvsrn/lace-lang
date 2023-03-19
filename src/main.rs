@@ -14,11 +14,13 @@ fn main() {
     let contents: String = read_to_string("main.lc").unwrap();
     let mut scanner = Scanner::new(contents.clone(), 0);
     scanner.scan();
+    
+    println!("Tokens: {:#?}", scanner.tokens);
 
-    let mut parser: Parser = Parser::new(scanner.tokens, contents);
+    let mut parser: Parser = Parser::new(scanner.tokens.clone(), contents);
     parser.parse();
 
-    println!("{:#?}", parser.ast);
+    println!("AST: {:#?}", parser.ast);
     println!(
         "{} in {:?} with {}",
         "Compiled".green().bold(),

@@ -139,17 +139,19 @@ impl Parser {
                 
                 if self.get_current() == Token::ParenLeft {
                     let mut arguments: Vec<Node> = vec![];
+                    self.advance();
 
                     loop {
-                        self.advance();
-                        arguments.push(self.expression());
-
                         if self.get_current() == Token::ParenRight {
+                            self.advance();
                             break;
                         } else if self.get_current() == Token::OpComma {
                             self.advance();
                         } else {
-                            self.error("SyntaxError: Expected `)` or `,`.")
+                            arguments.push(self.expression());
+                            
+                            // println!("{:?}", self.get_current());
+                            // self.error("SyntaxError: Expected `)` or `,`.")
                         }
                     }
 
@@ -252,7 +254,7 @@ impl Parser {
         self.multiplicative_expression()
     }
 
-    fn variable_init(&mut self, public: bool) -> Node {
+    fn variable_init(&mut self) -> Node {
         self.advance();
         let mutable = self.tokens[self.current] == Token::Keyword("mut".to_string());
         if mutable {
@@ -319,14 +321,7 @@ impl Parser {
     fn statement(&mut self) -> Node {
         return match self.get_current() {
             Token::Keyword(ref kw) => match kw.as_str() {
-                "let" => self.variable_init(false),
-                "pub" => match self.advance() {
-                    Token::Keyword(kw) => match kw.as_str() {
-                        "let" => self.variable_init(true),
-                        _ => self.error("Expected `let`, `fn`, `enum` or `struct` after `pub`"),
-                    },
-                    _ => self.error("Expected `let`, `fn`, `enum` or `struct` after `pub`"),
-                },
+                "let" => self.variable_init(),
                 kw => unimplemented!("{:?}", kw),
             },
             Token::NumberLiteral(_)
@@ -345,6 +340,7 @@ impl Parser {
     }
 
     pub fn parse(&mut self) {
+        
         while !self.is_at_end() {
             let node: Node = self.statement();
             self.ast.push(node);
