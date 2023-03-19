@@ -1,3 +1,4 @@
+use colored::Colorize;
 use std::process::exit;
 
 use crate::{error, scanner::Token};
@@ -22,7 +23,11 @@ pub enum Node {
         name: String,
         value: Box<Node>,
         mutable: bool,
-        public: bool,
+    },
+    VariableDestructureAssignment {
+        properties: Vec<(String, bool /* mutable */)>,
+        value: Box<Node>, // can only be an identifier
+        mutable: bool,
     },
     Binary {
         left: Box<Node>,
@@ -33,10 +38,10 @@ pub enum Node {
         left: Box<Node>,
         operation: char,
     },
-    ImportStatement {
-        identifiers: Vec<String>,
-        from: String,
-    },
+    FunctionCall {
+        name: String,
+        arguments: Vec<Node>,
+    }
 }
 
 pub struct Parser {
@@ -46,6 +51,7 @@ pub struct Parser {
     current_line: usize,
 
     pub ast: Vec<Node>,
+    pub warnings: usize,
 }
 
 impl Parser {
@@ -56,11 +62,16 @@ impl Parser {
             source,
             ast: vec![],
             current_line: 0,
+            warnings: 0,
         }
     }
 
     fn advance(&mut self) -> Token {
         self.current += 1;
+
+        if self.get_current() == Token::OpNewline {
+            self.current_line += 1;
+        }
 
         if self.current < self.tokens.len() {
             return self.get_current();
@@ -71,13 +82,7 @@ impl Parser {
 
     fn expect(&mut self, token: Token, error: &str) {
         if self.advance() != token {
-            error::print(
-                error,
-                &self.source.split('\n').collect::<Vec<&str>>(),
-                self.current_line,
-                0,
-            );
-            exit(0);
+            self.error(error);
         }
     }
 
@@ -87,8 +92,24 @@ impl Parser {
             &self.source.split('\n').collect::<Vec<&str>>(),
             self.current_line,
             0,
+            error::ErrorType::Fatal,
         );
+
+        println!("{}", "Could not compile due to error above.".red());
         exit(0);
+    }
+
+    fn warn(&mut self, warning: &str) {
+        error::print(
+            warning,
+            &self.source.split('\n').collect::<Vec<&str>>(),
+            self.current_line,
+            0,
+            error::ErrorType::Warning,
+        );
+        println!("");
+
+        self.warnings += 1;
     }
 
     #[inline(always)]
@@ -113,7 +134,33 @@ impl Parser {
             Token::BooleanLiteral(boolean) => Node::Boolean(boolean),
             Token::NumberLiteral(number) => Node::Number(number),
             Token::StringLiteral(ref string) => Node::String(string.to_string()),
-            Token::Identifier(ref string) => Node::Identifier(string.to_string()),
+            Token::Identifier(ref string) => {
+                let identifier = string.to_string();
+                
+                if self.get_current() == Token::ParenLeft {
+                    let mut arguments: Vec<Node> = vec![];
+
+                    loop {
+                        self.advance();
+                        arguments.push(self.expression());
+
+                        if self.get_current() == Token::ParenRight {
+                            break;
+                        } else if self.get_current() == Token::OpComma {
+                            self.advance();
+                        } else {
+                            self.error("SyntaxError: Expected `)` or `,`.")
+                        }
+                    }
+
+                    Node::FunctionCall {
+                        name: identifier,
+                        arguments
+                    }
+                } else {
+                    Node::Identifier(identifier)
+                }
+            },
             Token::OpNot => match self.get_current() {
                 Token::BooleanLiteral(_)
                 | Token::StringLiteral(_)
@@ -125,7 +172,7 @@ impl Parser {
                     operation: '!',
                 },
                 a => self.error(&format!(
-                    "SyntaxError: Unexpected token `{:?}`. Expected value",
+                    "SyntaxError: Unexpected token [2] `{:?}`. Expected value",
                     a
                 )),
             },
@@ -140,13 +187,12 @@ impl Parser {
                     operation: '-',
                 },
                 a => self.error(&format!(
-                    "SyntaxError: Unexpected token `{:?}`. Expected value",
+                    "SyntaxError: Unexpected token [3] `{:?}`. Expected value",
                     a
                 )),
             },
             Token::ParenLeft => {
                 let expression = self.expression();
-                println!("unary -> Token::ParenLeft | {:?}", expression);
 
                 if self.get_current() != Token::ParenRight {
                     self.error("SyntaxError: Expected ')' after expression.");
@@ -156,7 +202,7 @@ impl Parser {
                 expression
             }
             a => self.error(&format!(
-                "SyntaxError: Unexpected token `{:?}`. Expected value.",
+                "SyntaxError: Unexpected token [4] `{:?}`. Expected value.",
                 a
             )),
         }
@@ -176,7 +222,6 @@ impl Parser {
     */
     fn binary_expression(&mut self, builder: &str, operators: Vec<Token>) -> Node {
         let mut left = self.from_builder(builder);
-        println!("binary expr called: {}", builder);
 
         while operators.contains(&self.get_current()) {
             let operator = self.get_current();
@@ -210,22 +255,64 @@ impl Parser {
     fn variable_init(&mut self, public: bool) -> Node {
         self.advance();
         let mutable = self.tokens[self.current] == Token::Keyword("mut".to_string());
-        if mutable { self.advance(); }
-        let name = self.get_current();
+        if mutable {
+            self.advance();
+        }
 
-        self.expect(Token::OpAssign, "Expected assignment operator");
-        self.advance();
-        let value = self.expression();
+        if let Token::Identifier(name) = self.get_current() {
+            self.expect(Token::OpAssign, "Expected assignment operator");
+            self.advance();
+            let value = self.expression();
 
-        if let Token::Identifier(name) = name {
-            Node::VariableAssignment {
+            return Node::VariableAssignment {
                 name,
                 value: Box::new(value),
-                public,
                 mutable,
+            };
+        } else if self.get_current() == Token::CurlyLeft {
+            let mut properties: Vec<(String, bool)> = vec![];
+
+            loop {
+                match self.advance() {
+                    Token::Identifier(name) => {
+                        properties.push((name, mutable));
+                    }
+                    Token::Keyword(kw) => match kw.as_str() {
+                        "mut" => match self.advance() {
+                            Token::Identifier(name) => {
+                                properties.push((name.clone(), true));
+
+                                if mutable {
+                                    self.warn(&format!("Warning: All destructured properties are mutable. `mut` before `{}` is unnecessary.", name))
+                                }
+                            }
+                            _ => self.error("Expected identifier after `mut`."),
+                        },
+
+                        _ => self.error("Expected identifier or `mut`."),
+                    },
+                    _ => self.error("Expeced identifier or `mut`."),
+                }
+
+                if self.advance() == Token::CurlyRight {
+                    break;
+                }
+            }
+
+            self.expect(Token::OpAssign, "Expected assignment operator");
+            self.advance();
+
+            if let Token::Identifier(name) = self.advance() {
+                return Node::VariableDestructureAssignment {
+                    properties,
+                    value: Box::new(Node::Identifier(name)),
+                    mutable,
+                };
+            } else {
+                self.error("SyntaxError: Destructured variable right hand side must be a single identifier")
             }
         } else {
-            self.error("SyntaxError: Expected identifier after `let`");
+            self.error("SyntaxError: Expected identifier or `{` after `let`");
         }
     }
 
@@ -235,11 +322,11 @@ impl Parser {
                 "let" => self.variable_init(false),
                 "pub" => match self.advance() {
                     Token::Keyword(kw) => match kw.as_str() {
-                        "let" => self.variable_init(true),                        
-                        _ => self.error("Expected variable, function, enum or struct declaration after `pub`")
+                        "let" => self.variable_init(true),
+                        _ => self.error("Expected `let`, `fn`, `enum` or `struct` after `pub`"),
                     },
-                    _ => self.error("Expected variable, function, enum or struct declaration after `pub`")
-                }
+                    _ => self.error("Expected `let`, `fn`, `enum` or `struct` after `pub`"),
+                },
                 kw => unimplemented!("{:?}", kw),
             },
             Token::NumberLiteral(_)
@@ -250,10 +337,10 @@ impl Parser {
             | Token::ParenLeft
             | Token::BuiltinFn(_) => self.expression(),
             Token::OpNewline => {
-                self.current_line += 1;
+                self.advance();
                 self.statement()
             }
-            a => self.error(&format!("SyntaxError: Unexpected token `{:?}`.", a)),
+            a => self.error(&format!("SyntaxError: Unexpected token [1] `{:?}`.", a)),
         };
     }
 

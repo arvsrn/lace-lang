@@ -41,6 +41,7 @@ pub enum Token {
     BitwiseOr,
     OpPeriod,
     OpNewline,
+    OpComma,
 
     End,
 }
@@ -137,11 +138,13 @@ impl Scanner {
     pub fn scan(&mut self) {
         while let Some(c) = self.get_current() {
             if c.is_whitespace() {
+                if c == '\n' {
+                    self.tokens.push(Token::OpNewline);
+                }
+
                 self.advance();
                 continue;
             }
-
-            println!("{} | {:?}", c, self.tokens);
 
             let token = match c {
                 'a'..='z' | 'A'..='Z' => self.identifier(),
@@ -167,16 +170,13 @@ impl Scanner {
                 '^' => Token::BitwiseXor,
                 '|' => Token::BitwiseOr,
                 '&' => Token::BitwiseAnd,
-                '\n' => Token::OpNewline,
+                ',' => Token::OpComma,
                 '"' => self.string(),
                 a => unimplemented!("{:?}", a),
             };
 
             self.tokens.push(token.clone());
             self.advance();
-            println!("{:?} -- {:?}", token, self.get_current());
         }
-
-        println!("Scannen")
     }
 }

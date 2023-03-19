@@ -1,10 +1,17 @@
 use colored::Colorize;
 
+#[derive(PartialEq)]
+pub enum ErrorType {
+    Warning,
+    Fatal,
+}
+
 pub fn print(
     message: &str,     // Error message
     lines: &Vec<&str>, // All the lines in the source
     error_line: usize, // Line where the error occured
     error_char: usize,
+    error_type: ErrorType,
 ) {
     if error_line != 0 {
         println!(
@@ -29,7 +36,11 @@ pub fn print(
             " ".repeat(error_line.to_string().len()),
             "|".dimmed(),
             " ".repeat(error_char),
-            message.red()
+            if error_type == ErrorType::Fatal {
+                message.red()
+            } else {
+                message.yellow()
+            }
         )
     );
 
